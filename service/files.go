@@ -212,11 +212,19 @@ func ParseSystemctlShow(out string) State {
 	return st
 }
 
-// ParseLaunchctlPrint reads `launchctl print gui/UID/label` output.
+// ParseLaunchctlPrint reads `launchctl print gui/UID/label` output. Only the
+// service's own properties count (depth 1 of the braces): nested blocks, such
+// as its event triggers, print a `state = active` of their own.
 func ParseLaunchctlPrint(out string) State {
 	st := State{Installed: true}
+	depth := 0
 	for _, l := range strings.Split(out, "\n") {
 		l = strings.TrimSpace(l)
+		d := depth
+		depth += strings.Count(l, "{") - strings.Count(l, "}")
+		if d != 1 {
+			continue
+		}
 		switch {
 		case strings.HasPrefix(l, "state = "):
 			st.Detail = strings.TrimPrefix(l, "state = ")

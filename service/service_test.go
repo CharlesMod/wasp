@@ -282,9 +282,16 @@ func TestStatusParsing(t *testing.T) {
 	if !st.Running || st.Failed {
 		t.Errorf("launchd running: %+v", st)
 	}
-	st = ParseLaunchctlPrint("\tstate = waiting\n\tlast exit code = 2\n")
+	st = ParseLaunchctlPrint("gui/501/wasp.demo = {\n\tstate = waiting\n\tlast exit code = 2\n}")
 	if st.Running || !st.Failed || st.LastExit != "2" {
 		t.Errorf("launchd failed: %+v", st)
+	}
+	// a running agent's nested blocks print a state of their own (live, macOS 26)
+	st = ParseLaunchctlPrint("gui/501/wasp.demo = {\n\tactive count = 1\n\tstate = running\n\tpid = 4242\n" +
+		"\tevent triggers = {\n\t\tcom.apple.x => {\n\t\t\tstate = active\n\t\t}\n\t}\n" +
+		"\tendpoints = {\n\t\t\"wasp.demo\" = {\n\t\t\tstate = active\n\t\t}\n\t}\n\tlast exit code = (never exited)\n}")
+	if !st.Running || st.Failed || st.Detail != "running" {
+		t.Errorf("a nested state read as the service's: %+v", st)
 	}
 	st = ParseSchtasksQuery("TaskName: \\demo\r\nStatus:                                Running\r\nLast Result:                          267009\r\n")
 	if !st.Running || st.Failed {
