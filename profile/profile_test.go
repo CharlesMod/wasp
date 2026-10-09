@@ -178,3 +178,29 @@ func TestDetectHere(t *testing.T) {
 		t.Fatalf("%+v", p)
 	}
 }
+
+func TestACgroupCapIsTheMachine(t *testing.T) {
+	fs := t.TempDir()
+	w := func(rel, name, v string) {
+		d := filepath.Join(fs, rel)
+		os.MkdirAll(d, 0o755)
+		os.WriteFile(filepath.Join(d, name), []byte(v+"\n"), 0o644)
+	}
+	// the container's group caps at 6 GiB and 4 CPUs; a parent caps looser, a child not at all
+	w("machine.slice", "memory.max", "8589934592")
+	w("machine.slice/libpod-x", "memory.max", "6442450944")
+	w("machine.slice/libpod-x", "cpu.max", "400000 100000")
+	w("machine.slice/libpod-x/init.scope", "memory.max", "max")
+	w("machine.slice/libpod-x/init.scope", "cpu.max", "max 100000")
+	w("machine.slice/libpod-x", "memory.current", "1073741824")
+	p := Profile{CPUs: 20, RAM: 31 << 30, RAMAvail: 20 << 30}
+	ApplyCgroup(&p, fs, "0::/machine.slice/libpod-x/init.scope\n")
+	if p.RAM != 6<<30 || p.RAMAvail != 5<<30 || p.CPUs != 4 {
+		t.Fatalf("the tightest cap binds: %+v", p)
+	}
+	q := Profile{CPUs: 20, RAM: 31 << 30, RAMAvail: 20 << 30}
+	ApplyCgroup(&q, t.TempDir(), "0::/\n")
+	if q.RAM != 31<<30 || q.CPUs != 20 {
+		t.Fatalf("no cap leaves the machine as it is: %+v", q)
+	}
+}

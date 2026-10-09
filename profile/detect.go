@@ -90,6 +90,9 @@ func detectMemory(p *Profile) {
 		if b, err := os.ReadFile("/proc/meminfo"); err == nil {
 			p.RAM, p.RAMAvail = ParseMeminfo(string(b))
 		}
+		if b, err := os.ReadFile("/proc/self/cgroup"); err == nil {
+			ApplyCgroup(p, "/sys/fs/cgroup", string(b))
+		}
 	case "darwin":
 		if out, err := run("sysctl", "-n", "hw.memsize"); err == nil {
 			p.RAM = ParseSysctlValue(out)
