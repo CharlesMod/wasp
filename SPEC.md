@@ -118,3 +118,83 @@ dense 4B, a 26B-A4B MoE and a dense 27B, and show which are locked and why.
   linger, launchd LaunchAgent/Daemon, Windows scheduled task at boot or SCM);
   the private Python runtime (python-build-standalone) for DBee.
 - Phase 4: the Hive's `swarm/wasp` moves onto this module.
+
+## Phase 2: the wizard kit and the service (this phase)
+
+### `wizard`: a setup window any product fills in
+A loopback HTTP server (127.0.0.1, a free port) that serves one page app and
+an API, opened in a window, and gone when the product says it is done.
+
+- **Safety**: a random token minted at start is in the window's URL and must
+  accompany every API call (header `X-Wasp-Token` or `?t=`); requests whose
+  Host is not the loopback address or whose Origin is foreign are refused.
+  No other local program can drive an install.
+- **The window**: Windows, Microsoft Edge in app mode
+  (`msedge --app=URL --window-size=920,760`, the Hive's `edgePath` search);
+  macOS `open URL`; Linux `xdg-open URL`; failing all three, the URL is
+  printed. `--no-window` serves only (for tests and for a person on ssh).
+- **Look**: the Hive's page (port the structure of the Hive's
+  `swarm/wasp/ui/setup.html`: a header with the product name and the step
+  list, a title and lede, one `section.page` per page, Back / Next / Cancel)
+  and its palette as CSS tokens (`--bg --card --line --ink --dim --mute
+  --accent --accent-bg --ok --ok-bg --warn --warn-bg --bad --bad-bg
+  --on-accent --edge --track`), the neon scheme by default; a product sets
+  its `--accent` (and `--accent-bg`, `--on-accent`). Light and dark follow
+  `prefers-color-scheme`. Everything is embedded (`embed.FS`): no CDN, no
+  font downloads (system UI and monospace stacks).
+- **Product interface** (Go):
+  ```go
+  type Product interface {
+      Info() Info                       // name, version, accent colours, logo PNG bytes (optional)
+      Pages() []Page                    // in order; Welcome first, Done last are the product's
+      Plan(answers Answers) ([]Stage, error)   // the stages for what the person chose
+  }
+  type Page struct {
+      ID, Title, Lede string
+      HTML  string                      // the page body (a template fragment; ids it uses are its own)
+      Data  func(Context) (any, error)  // JSON handed to the page's script on entry (e.g. the profile, the fit table)
+      Check func(Context, Answers) error // validates the page's answers before Next
+      Script string                     // the page's own small JS: render(data), collect() -> answers
+  }
+  type Stage struct {
+      Name  string                      // what the step list says ("Downloading the mind")
+      Run   func(ctx context.Context, s *Step) error
+  }
+  // Step: s.Say(line) appends a log line; s.Progress(done, total int64) shows a bar;
+  // a returned error fails the run with that sentence, shown on the page.
+  ```
+  `Context` carries the machine `profile.Profile`, the install root, and
+  the answers so far.
+- **The runner**: stages run in order in one goroutine; every `Say` and
+  `Progress` is an event with a sequence number. The page long-polls
+  `GET /api/run?seen=N`, answered the moment an event past N exists (a
+  condition variable, never a timer) or after a 25 s keepalive with nothing
+  new. A failed stage stops the run, says which and why, and offers Retry
+  (re-plans and re-runs from the failed stage) and Close. Cancel during a run
+  cancels the stage's context.
+- **Non-interactive**: `Run(product, Options{Answers: ...})` runs Plan and the
+  stages with no window, printing each step to stdout (`==> stage`, then its
+  lines), exit 0 on success. This is how CI and a person on ssh install.
+
+### `service`: keep a program running on any of the three
+`service.Install(Spec{Name, Description, Exec []string, Env map, WorkDir, User bool, RestartOnFailure bool, LogFile string}) error`,
+plus `Start`, `Stop`, `Status` (running/stopped/failed and the last exit),
+`Uninstall`:
+- Linux: a systemd **user** unit in `~/.config/systemd/user/`, enabled,
+  `loginctl enable-linger` attempted so it runs without a login session
+  (said honestly when it fails); a system unit when running as root.
+- macOS: a LaunchAgent plist in `~/Library/LaunchAgents/` (`RunAtLoad`,
+  `KeepAlive` for restart), loaded with `launchctl bootstrap gui/<uid>`.
+- Windows: a scheduled task at logon (`schtasks /create /sc onlogon /rl
+  limited`) running the program hidden, restarted by a small wrapper loop
+  when it exits non-zero; an SCM service is a later option (needs admin).
+- Tests: the generated unit / plist / task XML are golden-free, asserted by
+  field (the program, the env, restart), with the command runners faked; a
+  real systemd user unit is exercised only when `WASP_LIVE_SERVICE=1`.
+
+### `runtime`: a private interpreter
+`runtime.Python(root, version)`: download python-build-standalone's
+`install_only` build for this OS/arch from its GitHub release (pinned
+release tag and Python 3.12.x; verify against the release's SHA256SUMS),
+extract under `<root>/python/`, and return the interpreter path. Never
+touches the system Python.
