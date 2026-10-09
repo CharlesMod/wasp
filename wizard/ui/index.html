@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{TITLE}}</title>
+<style>
+{{STYLE}}
+</style>
+</head>
+<body>
+<aside class="banner">
+  <div class="mark" id="mark">&#x2B22;</div>
+  <div><div class="name" id="pname"></div><div class="ver" id="ver"></div></div>
+  <ol class="steps" id="steps"></ol>
+</aside>
+<main>
+  <h1 id="title"></h1>
+  <p class="lede" id="lede"></p>
+
+{{SECTIONS}}
+  <section class="page" data-page="run" hidden>
+    <ul class="run" id="stages"></ul>
+    <div class="bar" id="barbox" hidden><div id="bar"></div></div>
+    <pre class="log" id="log"></pre>
+    <div class="fail" id="failed" hidden></div>
+  </section>
+
+  <div class="fail" id="checkerr" hidden></div>
+  <footer>
+    <button id="back">Back</button>
+    <button id="next" class="primary">Next</button>
+    <button id="cancel">Cancel</button>
+  </footer>
+</main>
+<script type="application/json" id="boot">{{BOOT}}</script>
+<script>
+"use strict";
+const PAGE_SCRIPTS = {};
+{{PAGESCRIPTS}}
+{{APP}}
+</script>
+</body>
+</html>
