@@ -6,6 +6,7 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -233,9 +234,28 @@ func (m *Manager) Stop(ctx context.Context, name string) error {
 	case "darwin":
 		return m.try(ctx, "launchctl", "bootout", m.domain(m.hasSystemPlist(name))+"/"+Label(name))
 	case "windows":
+		m.endTree(ctx, name)
 		return m.try(ctx, "schtasks", "/end", "/tn", name)
 	}
 	return fmt.Errorf("service: unsupported OS %q", m.GOOS)
+}
+
+// endTree ends the program a Windows task runs, and everything it started.
+// schtasks /end stops only the task's own process; the wrapper's program and
+// its children live on, holding their files. The wrapper is found by its
+// command line, which names this service's wrapper script and nothing else's,
+// so no process another program owns is touched.
+func (m *Manager) endTree(ctx context.Context, name string) {
+	w := strings.ReplaceAll(m.wrapperPath(name), "'", "''")
+	script := "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'powershell.exe' -and $_.CommandLine -and " +
+		"$_.CommandLine.Contains('" + w + "') } | ForEach-Object { taskkill.exe /T /F /PID $_.ProcessId | Out-Null }"
+	_, _ = m.Run(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", EncodePS(script))
+}
+
+// EncodePS is a PowerShell script as -EncodedCommand takes it (base64 of
+// UTF-16LE), so no quoting survives or breaks on its way through a command line.
+func EncodePS(script string) string {
+	return base64.StdEncoding.EncodeToString(UTF16LE(script)[2:])
 }
 
 // Uninstall stops, disables and removes the service's files.
@@ -257,9 +277,12 @@ func (m *Manager) Uninstall(ctx context.Context, name string) error {
 			return err
 		}
 	case "windows":
-		_, _ = m.Run(ctx, "schtasks", "/end", "/tn", name)
-		if err := m.try(ctx, "schtasks", "/delete", "/tn", name, "/f"); err != nil {
-			return err
+		m.endTree(ctx, name)
+		if _, err := m.Run(ctx, "schtasks", "/query", "/tn", name); err == nil {
+			_, _ = m.Run(ctx, "schtasks", "/end", "/tn", name)
+			if err := m.try(ctx, "schtasks", "/delete", "/tn", name, "/f"); err != nil {
+				return err
+			}
 		}
 		_ = os.Remove(m.wrapperPath(name))
 		_ = os.Remove(filepath.Join(m.StateDir, name+".xml"))

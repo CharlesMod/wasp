@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/xml"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf16"
 )
 
 type call struct {
@@ -334,5 +336,60 @@ func TestLiveSystemd(t *testing.T) {
 	st, err := m.Status(ctx, s.Name)
 	if err != nil || !st.Running {
 		t.Fatalf("%+v %v", st, err)
+	}
+}
+
+// Live on Windows 11: schtasks /end left the task's program and its children
+// running, holding their log, so the install folder could not be removed.
+func TestWindowsStopAndUninstallEndTheWholeTree(t *testing.T) {
+	ctx := context.Background()
+	f := &fake{}
+	m := mgr(t, "windows", f)
+	if _, err := m.Install(ctx, spec(t)); err != nil {
+		t.Fatal(err)
+	}
+	tree := func() string {
+		for _, c := range f.calls {
+			if c.name == "powershell.exe" && len(c.args) == 4 && c.args[2] == "-EncodedCommand" {
+				b, err := base64.StdEncoding.DecodeString(c.args[3])
+				if err != nil {
+					t.Fatal(err)
+				}
+				u := make([]uint16, len(b)/2)
+				for i := range u {
+					u[i] = uint16(b[2*i]) | uint16(b[2*i+1])<<8
+				}
+				return string(utf16.Decode(u))
+			}
+		}
+		return ""
+	}
+	if err := m.Stop(ctx, "demo"); err != nil {
+		t.Fatal(err)
+	}
+	ps := tree()
+	if !strings.Contains(ps, "taskkill.exe /T /F") || !strings.Contains(ps, ".Contains('"+m.wrapperPath("demo")+"')") {
+		t.Fatalf("stop must end the wrapper named by its own script, and its tree: %q", ps)
+	}
+	f.calls = nil
+	if err := m.Uninstall(ctx, "demo"); err != nil {
+		t.Fatal(err)
+	}
+	if tree() == "" || !f.has("schtasks /delete /tn demo /f") {
+		t.Fatalf("uninstall: %v", f.calls)
+	}
+	if _, err := os.Stat(m.wrapperPath("demo")); !os.IsNotExist(err) {
+		t.Fatal("the wrapper script stays behind")
+	}
+}
+
+func TestUninstallingATaskThatIsNotThereIsNotAnError(t *testing.T) {
+	f := &fake{fail: map[string]bool{"schtasks /query": true, "schtasks /delete": true}}
+	m := mgr(t, "windows", f)
+	if err := m.Uninstall(context.Background(), "never-installed"); err != nil {
+		t.Fatalf("a task never installed is already gone: %v", err)
+	}
+	if f.has("schtasks /delete") {
+		t.Fatal("nothing to delete")
 	}
 }
