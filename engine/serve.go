@@ -55,7 +55,10 @@ func ServeArgs(model string, sh fit.Shape, ctx, slots int, samplers map[string]f
 	if sh.MoECPULayers > 0 {
 		args = append(args, "--n-cpu-moe", strconv.Itoa(sh.MoECPULayers))
 	}
-	args = append(args, "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "--jinja")
+	// --cache-ram 0: no host-RAM prompt cache. It is one store every slot shares
+	// (one conversation's state was restored into another's slot), and by default
+	// it takes up to 8 GiB of RAM the fit never counted.
+	args = append(args, "-fa", "on", "-ctk", "q8_0", "-ctv", "q8_0", "--cache-ram", "0", "--jinja")
 	names := make([]string, 0, len(samplers))
 	for k := range samplers {
 		if _, ok := samplerFlags[k]; ok {

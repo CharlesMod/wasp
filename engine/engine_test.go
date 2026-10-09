@@ -274,7 +274,7 @@ func TestServeArgs(t *testing.T) {
 	join := func(a []string) string { return strings.Join(a, " ") }
 
 	gpu := join(ServeArgs("/m/a.gguf", fit.Shape{Kind: fit.GPU, GPULayers: -1}, 8192, 2, samplers, ServeOptions{Port: 4500}))
-	want := "-m /m/a.gguf --host 127.0.0.1 --port 4500 -c 16384 -np 2 -ngl 999 -fa on -ctk q8_0 -ctv q8_0 --jinja --temp 0.7 --top-k 40 --top-p 0.95"
+	want := "-m /m/a.gguf --host 127.0.0.1 --port 4500 -c 16384 -np 2 -ngl 999 -fa on -ctk q8_0 -ctv q8_0 --cache-ram 0 --jinja --temp 0.7 --top-k 40 --top-p 0.95"
 	if gpu != want {
 		t.Fatalf("gpu:\n got %s\nwant %s", gpu, want)
 	}
