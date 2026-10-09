@@ -1,0 +1,75 @@
+{
+  "models": [
+    {
+      "name": "qwen3.5-4b-iq4xs",
+      "label": "Qwen3.5 4B (IQ4_XS)",
+      "hf_repo": "unsloth/Qwen3.5-4B-GGUF",
+      "hf_file": "Qwen3.5-4B-IQ4_XS.gguf",
+      "sha256": "658a9e7e406deb06d0179755e3c14f6a82915a4be4962a2f92a64d948d2e572f",
+      "bytes": 2477053088,
+      "kind": "dense",
+      "rank": 1,
+      "min_ctx": 8192,
+      "why": "Small and quick; runs almost anywhere.",
+      "facts": {
+        "arch": "qwen35",
+        "layers": 32,
+        "kv_layers": 8,
+        "kv_heads": 4,
+        "key_len": 256,
+        "val_len": 256,
+        "ctx_train": 262144,
+        "total_bytes": 2477053088
+      }
+    },
+    {
+      "name": "gemma-4-26b-a4b-iq3s",
+      "label": "Gemma 4 26B-A4B (IQ3_S)",
+      "hf_repo": "unsloth/gemma-4-26B-A4B-it-GGUF",
+      "hf_file": "gemma-4-26B-A4B-it-UD-IQ3_S.gguf",
+      "sha256": "878be93f9c238ea853b3fd1eb602637ce3cf1cddea56dc345d9a7bf2d6093e29",
+      "bytes": 11289671136,
+      "kind": "moe",
+      "rank": 3,
+      "min_ctx": 8192,
+      "why": "The best mind of the three; only 4B parameters work per token, so it runs well with its experts in RAM.",
+      "facts": {
+        "arch": "gemma4",
+        "layers": 30,
+        "kv_layers": 5,
+        "sliding_layers": 25,
+        "window": 1024,
+        "kv_heads": 8,
+        "key_len": 512,
+        "val_len": 512,
+        "ctx_train": 262144,
+        "experts": 128,
+        "experts_used": 8,
+        "expert_bytes": 9214508032,
+        "total_bytes": 11289671136
+      }
+    },
+    {
+      "name": "swift-qwen3.8-27b-iq3xs",
+      "label": "Swift-Qwen3.8 27B (IQ3_XS)",
+      "hf_repo": "ukisai/Swift-Qwen3.8-27B-GGUF",
+      "hf_file": "Swift-Qwen3.8-27B-IQ3_XS.gguf",
+      "sha256": "b71a91573e4f77cec646563b7578dd65b17e5939347e80a732ae12a5111b66c7",
+      "bytes": 13011941472,
+      "kind": "dense",
+      "rank": 2,
+      "min_ctx": 8192,
+      "why": "A dense 27B: wants the whole model on a card.",
+      "facts": {
+        "arch": "qwen35",
+        "layers": 65,
+        "kv_layers": 16,
+        "kv_heads": 4,
+        "key_len": 256,
+        "val_len": 256,
+        "ctx_train": 262144,
+        "total_bytes": 13011941472
+      }
+    }
+  ]
+}

@@ -102,7 +102,7 @@ func TestAssetsAtThePinnedTag(t *testing.T) {
 		{"darwin", "arm64", Metal, []string{"llama-b11279-bin-macos-arm64.tar.gz"}},
 		{"windows", "amd64", CPU, []string{"llama-b11279-bin-win-cpu-x64.zip"}},
 		{"windows", "amd64", Vulkan, []string{"llama-b11279-bin-win-vulkan-x64.zip"}},
-		{"windows", "amd64", CUDA, []string{"llama-b11279-bin-win-cuda-13.3-x64.zip", "cudart-llama-bin-win-cuda-13.3-x64.zip"}},
+		{"windows", "amd64", CUDA, []string{"llama-b11279-bin-win-cuda-13.4-x64.zip", "cudart-llama-bin-win-cuda-13.4-x64.zip"}},
 	}
 	for _, c := range cases {
 		got, err := Assets(LlamaTag, c.goos, c.arch, c.f)
@@ -178,8 +178,8 @@ func TestInstallLinuxTarballThenReuse(t *testing.T) {
 
 func TestInstallWindowsCUDAExtractsBothZips(t *testing.T) {
 	srv, _ := upstream(map[string][]byte{
-		"llama-b11279-bin-win-cuda-13.3-x64.zip": zipOf(t, "llama-server.exe", "ggml-cuda.dll"),
-		"cudart-llama-bin-win-cuda-13.3-x64.zip": zipOf(t, "cudart64_13.dll"),
+		"llama-b11279-bin-win-cuda-13.4-x64.zip": zipOf(t, "llama-server.exe", "ggml-cuda.dll"),
+		"cudart-llama-bin-win-cuda-13.4-x64.zip": zipOf(t, "cudart64_13.dll"),
 	})
 	defer srv.Close()
 	root := t.TempDir()

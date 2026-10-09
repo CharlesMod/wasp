@@ -26,6 +26,12 @@ import (
 // fleet measured. It never floats on "latest"; a bump is a change to this line.
 const LlamaTag = "b11279"
 
+// WinCUDAVersion is the CUDA toolkit version in upstream's Windows CUDA asset
+// names (llama-<tag>-bin-win-cuda-<version>-x64.zip). The Hive's pin named
+// 13.3; b11279 publishes 13.4 (and 12.4 for older drivers), so this is checked
+// against the release at the pinned tag and moves with it.
+const WinCUDAVersion = "13.4"
+
 // Flavor is which llama.cpp build suits a machine.
 type Flavor string
 
@@ -96,8 +102,8 @@ func Assets(tag, goos, arch string, flavor Flavor) ([]string, error) {
 		return []string{fmt.Sprintf("llama-%s-bin-win-vulkan-x64.zip", tag)}, nil
 	case "windows/amd64/cuda":
 		return []string{
-			fmt.Sprintf("llama-%s-bin-win-cuda-13.3-x64.zip", tag),
-			"cudart-llama-bin-win-cuda-13.3-x64.zip",
+			fmt.Sprintf("llama-%s-bin-win-cuda-%s-x64.zip", tag, WinCUDAVersion),
+			fmt.Sprintf("cudart-llama-bin-win-cuda-%s-x64.zip", WinCUDAVersion),
 		}, nil
 	case "linux/amd64/cuda":
 		return nil, errors.New("upstream ships no Linux CUDA prebuilt: use the vulkan flavor, or a build of your own")
