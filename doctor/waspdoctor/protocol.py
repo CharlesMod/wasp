@@ -46,3 +46,8 @@ class Reply:
 class NoSeat(RuntimeError):
     """The mind's server answered, but no seat came within the call's wait: it is
     busy, not broken. A case keeps asking until its own clock runs out."""
+
+
+class TooLong(RuntimeError):
+    """No seat the mind has holds the call's context (the Hive's router answers 413,
+    too_long): asking again will not change it; only a shorter call will."""

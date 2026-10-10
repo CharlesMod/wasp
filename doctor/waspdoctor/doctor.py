@@ -25,11 +25,13 @@ from pathlib import Path
 
 from . import looks
 from .cures import Cure, Runbook, check_cure, check_verify
-from .protocol import NoSeat, Wake
+from .protocol import NoSeat, TooLong, Wake
 from .casebook import Casebook
 
 
 LOOK_BUDGET = 14
+CUT_MAX = 3                  # how far a call is trimmed to fit a seat before the case is handed over
+CUT_KEEP = (600, 200, 80)    # each level's most characters of an older tool answer in the call
 WRITES = re.compile(r"writes|redirection|not a read-only command|changes something")
 CURE_BUDGET = 2
 CASE_HOURS = 3.0              # a case works until this wall-clock bound, then is handed to a person
@@ -119,6 +121,7 @@ class Case:
     platform: str = ""
     turn_log: list = field(default_factory=list)         # one per call: the kit offered, its reply, timing
     held: bool = False                                   # this case holds its frame on the court
+    cut: int = 0                                         # how far the calls are trimmed to fit a seat (0: whole)
     court_acts: list = field(default_factory=list)       # {act, why, at, taken, said[, key]}
     quarantined: list = field(default_factory=list)      # the court's quarantine on this frame, as the case opened
 
@@ -232,6 +235,21 @@ class Doctor:
                     break
                 try:
                     reply = self._ask(case, msgs, phase)
+                except TooLong as e:
+                    # no seat holds the call: asking again will not change it, a shorter call will.
+                    # The call is trimmed (the record on disk stays whole), and past CUT_MAX handed over
+                    case.cut += 1
+                    if case.cut > CUT_MAX:
+                        case.hand = {"step": "the case outgrew every seat the mind has, even with its older looks "
+                                             "trimmed (its record holds every look): a mind with a longer context, "
+                                             "or a person, takes it on",
+                                     "finding": (case.diagnosis or {}).get("cause") or f"no diagnosis yet: {str(e)[:200]}"}
+                        case.end, case.finding = "handed", case.hand["finding"]
+                        self._still_held(case)
+                        self.say(f"[{case.id}] handed: the case outgrew every seat")
+                        break
+                    self.say(f"[{case.id}] too long for every seat: {str(e)[:120]}; trimming the older looks (level {case.cut})")
+                    continue
                 except NoSeat as e:
                     # the Hive is busy: the case waits for a seat until its own clock, never ends on it
                     self.say(f"[{case.id}] still waiting for a seat: {str(e)[:160]}")
@@ -344,6 +362,23 @@ class Doctor:
         return case
 
     # ------------------------------------------------------------- the pieces
+    @staticmethod
+    def _fit(msgs: list, cut: int) -> list:
+        """The call as the mind sees it at trim level cut: the system and the last two
+        messages whole, every older tool answer (and at the deepest level the opening)
+        cut to CUT_KEEP's length with a note; the case's record is never changed."""
+        if not cut:
+            return msgs
+        keep = CUT_KEEP[min(cut, len(CUT_KEEP)) - 1]
+        out = []
+        for i, m in enumerate(msgs):
+            c = m.get("content")
+            older = 0 < i < len(msgs) - 2
+            if older and isinstance(c, str) and len(c) > keep and (m.get("role") == "tool" or (i == 1 and cut >= len(CUT_KEEP))):
+                m = {**m, "content": c[:keep] + f"\n[trimmed to fit the seat: {len(c)} characters; the case's record keeps them]"}
+            out.append(m)
+        return out
+
     def _court_word(self, case: Case, verb: str, why: str) -> str:
         """The frame held or returned on the court, with the case and why."""
         if (verb == "hold") == case.held:
@@ -398,7 +433,7 @@ class Doctor:
             if phase == "treat" and case.quarantined:
                 tools = tools + [release_tool([q["key"] for q in case.quarantined])]
         effort = self.effort.get(phase, "")
-        r = self.mind.chat(msgs, tools=tools, max_tokens=self.max_tokens, effort=effort)
+        r = self.mind.chat(self._fit(msgs, case.cut), tools=tools, max_tokens=self.max_tokens, effort=effort)
         case.turns += 1
         case.mind = getattr(self.mind, "name", case.mind)      # the mind that answered (a fallback changes it)
         calls = ",".join(tc["name"] for tc in r.tool_calls) or "words"
@@ -410,6 +445,8 @@ class Doctor:
         rec = {"turn": case.turns, "phase": phase, "effort": effort, "tools": [t["function"]["name"] for t in tools],
                "at": len(msgs), "seconds": round(r.seconds, 2), "tokens_in": r.tokens_in, "tokens_out": r.tokens_out,
                "calls": r.tool_calls, "text": r.text, "reasoning": r.reasoning, "served": r.served}
+        if case.cut:
+            rec["cut"] = case.cut                              # the call the mind saw was trimmed to this level
         if msgs is not case.transcript:
             rec["context"] = msgs[len(case.transcript):]     # a side call (a draft checked) over the transcript so far
         case.turn_log.append(rec)
