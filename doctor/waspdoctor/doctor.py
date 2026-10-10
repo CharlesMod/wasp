@@ -179,10 +179,16 @@ def _gist(out: str) -> str:
 
 class Doctor:
     def __init__(self, patient, mind, *, home: Path, runbook: Runbook | None = None, say=print, max_tokens: int = 0,
-                 court=None, probes: Path | None = None, effort: dict | None = None, case_hours: float | None = None):
+                 court=None, probes: Path | None = None, effort: dict | None = None, case_hours: float | None = None,
+                 reread=None, vet=None):
         self.patient, self.mind, self.home, self.say = patient, mind, home, say
         self.probes = probes                   # a probes.jsonl (the Hive's, read-only, verdict first): first looks
         self.court = court                     # a Hive frame's court (court.Court): hold and return
+        # a product's own word on its own wakes: reread(wake) -> (code, out) or None for the
+        # loop's own re-read (the Hive re-runs the probes that opened its case)
+        self.reread = reread
+        # a product's own refusals of a written cure: vet(command, undo) -> why, '' to let it run
+        self.vet = vet
         # a reply's budget; a mind that thinks before it answers needs room for both
         self.max_tokens = max_tokens or int(os.environ.get("DBEE_MAX_TOKENS", "700"))
         # reasoning effort per phase, for minds that think (DBEE_EFFORT="triage=low,treat=medium");
@@ -733,6 +739,8 @@ class Doctor:
                 if rb.command.strip() == cure.command.strip():
                     cure.name, cure.source = rb.name, "runbook"
             problems = cure.problems(self.patient.platform)
+        if not problems and self.vet is not None and (why := self.vet(cure.command, cure.undo)):
+            problems = [why]
         if problems:
             case.refusals.append({"kind": "cure", "what": cure.command, "why": "; ".join(problems)})
             same = sum(1 for r in case.refusals if r["kind"] == "cure" and r["what"] == cure.command)
@@ -819,6 +827,8 @@ class Doctor:
         return 0, "\n".join(outs)
 
     def _reread(self, wake: Wake, settle_s: float = 20) -> tuple[int, str]:
+        if self.reread is not None and (said := self.reread(wake)) is not None:
+            return said
         plat = self.patient.platform
         if plat.name != "linux" and self._service(wake):
             end = time.time() + settle_s

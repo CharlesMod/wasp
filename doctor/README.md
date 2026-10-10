@@ -12,6 +12,11 @@ there (`court`). Every case is on disk after every turn, with what the mind saw
 and said, for training.
 
 A product brings its own patient, mind and watchers in the shapes of
-`protocol.py`. DBee is one (github.com/CharlesMod/dbee).
+`protocol.py`, and may bring its own word on its own wakes: `reread(wake)` says
+whether what woke the doctor still reads red, `vet(command, undo)` refuses a
+written cure by the product's own laws. A Hive is reached one way by every
+product: a frame is `patient.Hive` (each command a `hive run` job), its mind
+`minds.HiveMind` (a seat from the router). DBee is one product
+(github.com/CharlesMod/dbee); the Hive's doctor bee is another.
 
     python3 -m pytest -q        # from this directory
