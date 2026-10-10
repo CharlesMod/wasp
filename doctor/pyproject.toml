@@ -1,0 +1,17 @@
+[project]
+name = "wasp-doctor"
+version = "0.1.0"
+description = "The doctor's loop shared by DBee and the Hive: wake, triage, treat, verify"
+requires-python = ">=3.10"
+readme = "README.md"
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["waspdoctor"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

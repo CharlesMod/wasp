@@ -20,3 +20,8 @@ long-polled step runner, a non-interactive mode), `service` (systemd user
 units, launchd plists and Windows scheduled tasks behind an injectable
 runner) and `runtime` (a private Python from python-build-standalone). See
 `examples/hello-setup` for the smallest product (`go run ./examples/hello-setup`).
+
+Phase 3 package: `doctor` carries `waspdoctor`, the doctor's loop in Python
+shared by DBee and the Hive's doctor bee (wake, triage, treat, verify; see
+`doctor/README.md`); a Go installer lays it from `doctor.Python`, the version
+its go.mod pins. Its tests: `cd doctor && python3 -m pytest -q`.
