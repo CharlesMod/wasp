@@ -129,14 +129,19 @@ def openai_reply(out: dict, seconds: float, name: str) -> "Reply":
 
 
 class HiveMind:
-    """A seat on the hive, by model name, for one call at a time."""
+    """A seat on the hive for one call at a time: by model name, or by the
+    kind of work (`kind`, at the product's `urgency` and quality floor), the
+    router choosing the mind and the call naming the one it seated."""
 
-    def __init__(self, court: str, model: str, *, cls: str = "background", wait_s: float = 120):
+    def __init__(self, court: str, model: str = "", *, cls: str = "background", wait_s: float = 120,
+                 kind: str = "", urgency: float | None = None, quality: float | None = None):
         self.court = court.rstrip("/")
         self.model = model
         self.cls = cls
         self.wait_s = wait_s
-        self.name = f"hive:{model}"
+        self.ask = {k: v for k, v in (("model", model), ("kind", kind), ("urgency", urgency),
+                                      ("quality", quality)) if v not in ("", None)}
+        self.name = f"hive:{model or kind}"
         self.say = print
 
     def seats(self) -> int | None:
@@ -154,8 +159,7 @@ class HiveMind:
         refusal only ``hold`` seconds a call (its `wait`), and says when to ask
         again (`retry_after_s`); a seat another caller holds frees at its done."""
         hold = min(10.0, self.wait_s)
-        q = urllib.parse.urlencode({"class": self.cls, "model": self.model,
-                                    "tokens": tokens, "wait": hold})
+        q = urllib.parse.urlencode({"class": self.cls, **self.ask, "tokens": tokens, "wait": hold})
         deadline = time.time() + self.wait_s
         last = {}
         while True:
@@ -164,15 +168,15 @@ class HiveMind:
                 return body
             if code == 413 or body.get("error") == "too_long":
                 # no seat holds a call this long: waiting will not change it (the loop trims it)
-                raise TooLong(f"{self.model}: {body.get('detail') or body.get('why') or body}")
+                raise TooLong(f"{self.name}: {body.get('detail') or body.get('why') or body}")
             last = body
             if time.time() > deadline:
                 break
             if self.say and time.time() - getattr(self, "_said", 0) > 30:
                 self._said = time.time()
-                self.say(f"   waiting for a seat on {self.model}: {(body.get('detail') or body.get('why') or '')[:120]}")
+                self.say(f"   waiting for a seat on {self.name}: {(body.get('detail') or body.get('why') or '')[:120]}")
             time.sleep(min(5.0, float(body.get("retry_after_s") or body.get("retry_s") or 2)))
-        raise NoSeat(f"no seat for {self.model} in {self.wait_s:.0f}s: {last.get('detail') or last.get('why') or last}")
+        raise NoSeat(f"no seat for {self.name} in {self.wait_s:.0f}s: {last.get('detail') or last.get('why') or last}")
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
              *, max_tokens: int = 1024, temperature: float = 0.0, effort: str = "") -> Reply:
@@ -197,7 +201,7 @@ class HiveMind:
         url = grant["url"].rstrip("/")
         # n_predict beside max_tokens: the engine's own cap, which a pin's default
         # otherwise overrides (seen: 12000 on a call that asked 4096)
-        body = openai_body(self.model, messages, tools, max_tokens, temperature, effort)
+        body = openai_body(grant.get("model") or self.model, messages, tools, max_tokens, temperature, effort)
         if grant.get("slot") is not None:
             # the seat the court granted, not one llama-server picks: an unpinned call
             # lands by LRU on another caller's slot and reads that conversation's state
