@@ -27,6 +27,11 @@ def _post(url: str, body: dict, headers: dict | None = None, timeout: float = 30
         return json.loads(r.read())
 
 
+# The sampler knobs a model's card names (the registry's sampler_params), as
+# the hive's ladder sends them (dance.rungs.CARD_KEYS; this package imports
+# nothing of the hive's): a seat on the hive samples by its model's card.
+CARD_KEYS = ("temperature", "top_p", "top_k", "min_p", "presence_penalty", "repeat_penalty")
+
 # Silence, not length, ends a call: a slow machine reads a long prompt for
 # minutes, and llama-server says how far it is (return_progress) while it does.
 SILENCE_S = 120.0
@@ -96,13 +101,15 @@ def _get(url: str, timeout: float = 30) -> tuple[int, dict]:
             return e.code, {}
 
 
-def openai_body(model: str, messages, tools, max_tokens: int, temperature: float, effort: str = "") -> dict:
+def openai_body(model: str, messages, tools, max_tokens: int, temperature: float | None, effort: str = "") -> dict:
     """A chat call as any OpenAI-compatible server takes it; `n_predict` is
     llama.cpp's own cap (a server's default can otherwise override max_tokens),
     `chat_template_kwargs` its per-request reasoning effort, and the top-level
     `reasoning_effort` is the same for vLLM, Ollama and OpenAI; each ignores the other's."""
     body = {"model": model, "messages": messages, "max_tokens": max_tokens,
-            "n_predict": max_tokens, "temperature": temperature}
+            "n_predict": max_tokens}
+    if temperature is not None:
+        body["temperature"] = temperature
     if effort:
         body["chat_template_kwargs"] = {"reasoning_effort": effort}
         body["reasoning_effort"] = effort
@@ -143,6 +150,22 @@ class HiveMind:
                                       ("quality", quality)) if v not in ("", None)}
         self.name = f"hive:{model or kind}"
         self.say = print
+        self._cards: dict | None = None
+
+    def card(self, model: str) -> dict:
+        """The seated model's card from the court (GET /v1/models, read once):
+        what a call on it samples with, as every hive call does
+        (the Hive's ops/SAMPLERS.md). {} when the court names no card for it."""
+        if self._cards is None:
+            try:
+                code, body = _get(f"{self.court}/v1/models", timeout=10)
+            except OSError:
+                code, body = 0, {}
+            rows = body.get("models") if code == 200 and isinstance(body, dict) else []
+            self._cards = {str(m.get("name")): {k: v for k, v in (m.get("sampler_params") or {}).items()
+                                                if k in CARD_KEYS and isinstance(v, (int, float))}
+                           for m in rows or [] if isinstance(m, dict)}
+        return dict(self._cards.get(model) or {})
 
     def seats(self) -> int | None:
         """How many seats the Hive holds for this model now (the router's own count),
@@ -179,14 +202,14 @@ class HiveMind:
         raise NoSeat(f"no seat for {self.name} in {self.wait_s:.0f}s: {last.get('detail') or last.get('why') or last}")
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
-             *, max_tokens: int = 1024, temperature: float = 0.0, effort: str = "") -> Reply:
+             *, max_tokens: int = 1024, effort: str = "") -> Reply:
         """One call; an engine that drops mid-call (a restart, a reload) is
         backed off from and asked for again through the router, until wait_s."""
         deadline = time.time() + self.wait_s
         delay = 2.0
         while True:
             try:
-                return self._chat_once(messages, tools, max_tokens=max_tokens, temperature=temperature, effort=effort)
+                return self._chat_once(messages, tools, max_tokens=max_tokens, effort=effort)
             except (urllib.error.URLError, ConnectionError, TimeoutError, http.client.HTTPException) as e:
                 if isinstance(e, urllib.error.HTTPError) and e.code < 500:
                     raise
@@ -195,13 +218,15 @@ class HiveMind:
                 time.sleep(delay)
                 delay = min(delay * 2, 30.0)
 
-    def _chat_once(self, messages, tools, *, max_tokens, temperature, effort="") -> Reply:
+    def _chat_once(self, messages, tools, *, max_tokens, effort="") -> Reply:
         est = sum(len(json.dumps(m)) for m in messages) // 3 + max_tokens
         grant = self._grant(est)
         url = grant["url"].rstrip("/")
         # n_predict beside max_tokens: the engine's own cap, which a pin's default
         # otherwise overrides (seen: 12000 on a call that asked 4096)
-        body = openai_body(grant.get("model") or self.model, messages, tools, max_tokens, temperature, effort)
+        model = grant.get("model") or self.model
+        sampled = self.card(model)
+        body = dict(openai_body(model, messages, tools, max_tokens, None, effort), **sampled)
         if grant.get("slot") is not None:
             # the seat the court granted, not one llama-server picks: an unpinned call
             # lands by LRU on another caller's slot and reads that conversation's state
@@ -222,5 +247,6 @@ class HiveMind:
             except Exception:  # noqa: BLE001 — the engine's idle reading frees the seat then
                 pass
         r = openai_reply(out, time.time() - t0, self.name)
-        r.served = {"node": grant.get("node", ""), "url": grant.get("url", ""), "slot": int(grant.get("slot", 0) or 0)}
+        r.served = {"node": grant.get("node", ""), "url": grant.get("url", ""), "slot": int(grant.get("slot", 0) or 0),
+                    "sampled": sampled}
         return r
