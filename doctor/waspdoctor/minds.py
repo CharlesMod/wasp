@@ -1,16 +1,18 @@
 """Minds the loop can ask, in its one call shape (`chat(messages, tools=None) -> Reply`):
 
-* `HiveMind` asks a Hive's router for a seat (``GET /v1/route``, the court's own
-  long poll), calls the engine's OpenAI-style endpoint on the seat granted, and
-  gives the seat back (``POST /v1/route/done``).
+* `HiveMind` calls a Hive through its frame's door: the door says where a
+  call would go and that model's card, and holds the call until an engine
+  can start it; nothing is granted or said done.
 * `openai_body` and `openai_reply` are the call and the answer any
   OpenAI-compatible server speaks, for a product's own minds beside it.
 
 Every reply carries its usage, so a case counts tokens and seconds."""
 from __future__ import annotations
 
+import base64
 import http.client
 import json
+import os
 import time
 import urllib.error
 import urllib.parse
@@ -35,6 +37,10 @@ CARD_KEYS = ("temperature", "top_p", "top_k", "min_p", "presence_penalty", "repe
 # Silence, not length, ends a call: a slow machine reads a long prompt for
 # minutes, and llama-server says how far it is (return_progress) while it does.
 SILENCE_S = 120.0
+
+# The frame's door when neither the caller nor HIVE_DOOR names one: the
+# drone's loopback door on every frame of a Hive.
+DOOR = "http://127.0.0.1:4409"
 
 
 def _post_stream(url: str, body: dict, headers: dict | None = None, silence_s: float | None = None) -> dict:
@@ -118,7 +124,7 @@ def openai_body(model: str, messages, tools, max_tokens: int, temperature: float
     return body
 
 
-def openai_reply(out: dict, seconds: float, name: str) -> "Reply":
+def openai_reply(out: dict, seconds: float, name: str) -> Reply:
     msg = (out.get("choices") or [{}])[0].get("message") or {}
     usage = out.get("usage") or {}
     calls = []
@@ -136,13 +142,16 @@ def openai_reply(out: dict, seconds: float, name: str) -> "Reply":
 
 
 class HiveMind:
-    """A seat on the hive for one call at a time: by model name, or by the
-    kind of work (`kind`, at the product's `urgency` and quality floor), the
-    router choosing the mind and the call naming the one it seated."""
+    """A call on a Hive through its frame's door (the drone's loopback door:
+    `door`, else HIVE_DOOR, else this frame's :4409), by model name or by the
+    kind of work (`kind`, at the product's `urgency` and quality floor). The
+    door says where a call would go and that model's card; the call goes
+    under a path that asks for that model, and the door holds it until an
+    engine can start it. Nothing is granted and nothing said done."""
 
-    def __init__(self, court: str, model: str = "", *, cls: str = "background", wait_s: float = 120,
+    def __init__(self, door: str = "", model: str = "", *, cls: str = "background", wait_s: float = 120,
                  kind: str = "", urgency: float | None = None, quality: float | None = None):
-        self.court = court.rstrip("/")
+        self.door = (door or os.environ.get("HIVE_DOOR") or DOOR).rstrip("/")
         self.model = model
         self.cls = cls
         self.wait_s = wait_s
@@ -150,61 +159,25 @@ class HiveMind:
                                       ("quality", quality)) if v not in ("", None)}
         self.name = f"hive:{model or kind}"
         self.say = print
-        self._cards: dict | None = None
 
-    def card(self, model: str) -> dict:
-        """The seated model's card from the court (GET /v1/models, read once):
-        what a call on it samples with, as every hive call does
-        (the Hive's ops/SAMPLERS.md). {} when the court names no card for it."""
-        if self._cards is None:
-            try:
-                code, body = _get(f"{self.court}/v1/models", timeout=10)
-            except OSError:
-                code, body = 0, {}
-            rows = body.get("models") if code == 200 and isinstance(body, dict) else []
-            self._cards = {str(m.get("name")): {k: v for k, v in (m.get("sampler_params") or {}).items()
-                                                if k in CARD_KEYS and isinstance(v, (int, float))}
-                           for m in rows or [] if isinstance(m, dict)}
-        return dict(self._cards.get(model) or {})
-
-    def seats(self) -> int | None:
-        """How many seats the Hive holds for this model now (the router's own count),
-        or None when the court does not say."""
+    def _where(self, hive: dict, messages, tools) -> tuple[int, dict]:
+        """Where the door would put the call now, granting nothing; its refusal said."""
+        body = {"hive": dict(hive, read=True), "messages": messages, **({"tools": tools} if tools else {})}
+        req = urllib.request.Request(f"{self.door}/v1/chat/completions", data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json"}, method="POST")
         try:
-            code, body = _get(f"{self.court}/v1/route/demand", timeout=10)
-        except OSError:
-            return None
-        n = (body.get("seats") or {}).get(self.model) if code == 200 else None
-        return int(n) if isinstance(n, (int, float)) else None
-
-    def _grant(self, tokens: int) -> dict:
-        """Ask until a seat is granted or ``wait_s`` has passed. The court holds a
-        refusal only ``hold`` seconds a call (its `wait`), and says when to ask
-        again (`retry_after_s`); a seat another caller holds frees at its done."""
-        hold = min(10.0, self.wait_s)
-        q = urllib.parse.urlencode({"class": self.cls, **self.ask, "tokens": tokens, "wait": hold})
-        deadline = time.time() + self.wait_s
-        last = {}
-        while True:
-            code, body = _get(f"{self.court}/v1/route?{q}", timeout=hold + 20)
-            if code == 200 and body.get("url"):
-                return body
-            if code == 413 or body.get("error") == "too_long":
-                # no seat holds a call this long: waiting will not change it (the loop trims it)
-                raise TooLong(f"{self.name}: {body.get('detail') or body.get('why') or body}")
-            last = body
-            if time.time() > deadline:
-                break
-            if self.say and time.time() - getattr(self, "_said", 0) > 30:
-                self._said = time.time()
-                self.say(f"   waiting for a seat on {self.name}: {(body.get('detail') or body.get('why') or '')[:120]}")
-            time.sleep(min(5.0, float(body.get("retry_after_s") or body.get("retry_s") or 2)))
-        raise NoSeat(f"no seat for {self.name} in {self.wait_s:.0f}s: {last.get('detail') or last.get('why') or last}")
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return r.status, json.loads(r.read() or b"{}")
+        except urllib.error.HTTPError as e:
+            try:
+                return e.code, json.loads(e.read() or b"{}")
+            except ValueError:
+                return e.code, {}
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None,
              *, max_tokens: int = 1024, effort: str = "") -> Reply:
         """One call; an engine that drops mid-call (a restart, a reload) is
-        backed off from and asked for again through the router, until wait_s."""
+        backed off from while it is down and asked for again, until wait_s."""
         deadline = time.time() + self.wait_s
         delay = 2.0
         while True:
@@ -215,38 +188,27 @@ class HiveMind:
                     raise
                 if time.time() + delay > deadline:
                     raise
-                time.sleep(delay)
+                time.sleep(delay)          # backoff while the other side is down
                 delay = min(delay * 2, 30.0)
 
     def _chat_once(self, messages, tools, *, max_tokens, effort="") -> Reply:
-        est = sum(len(json.dumps(m)) for m in messages) // 3 + max_tokens
-        grant = self._grant(est)
-        url = grant["url"].rstrip("/")
-        # n_predict beside max_tokens: the engine's own cap, which a pin's default
-        # otherwise overrides (seen: 12000 on a call that asked 4096)
-        model = grant.get("model") or self.model
-        sampled = self.card(model)
+        hive = {"class": self.cls, **self.ask,
+                "tokens": sum(len(json.dumps(m)) for m in messages) // 3 + max_tokens}
+        code, where = self._where(hive, messages, tools)
+        if code == 413 or where.get("error") == "too_long":
+            # no slot holds a call this long: waiting will not change it (the loop trims it)
+            raise TooLong(f"{self.name}: {where.get('why') or where}")
+        model = str(where.get("model") or self.model) if code == 200 else self.model
+        if not model:
+            raise NoSeat(f"no seat for {self.name}: {where.get('why') or where}")
+        sampled = {k: v for k, v in (where.get("sampler_params") or {}).items()
+                   if k in CARD_KEYS and isinstance(v, (int, float))}
         body = dict(openai_body(model, messages, tools, max_tokens, None, effort), **sampled)
-        if grant.get("slot") is not None:
-            # the seat the court granted, not one llama-server picks: an unpinned call
-            # lands by LRU on another caller's slot and reads that conversation's state
-            body["id_slot"] = int(grant["slot"])
+        raw = json.dumps(dict(hive, model=model), separators=(",", ":")).encode()
+        path = base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
         t0 = time.time()
-        usage, out = {}, {}
-        try:
-            out = _post_stream(f"{url}/v1/chat/completions", body)
-        finally:
-            usage = out.get("usage") or {}
-            try:
-                _post(f"{self.court}/v1/route/done",
-                      {"node": grant.get("node", ""), "url": grant.get("url", ""),
-                       "slot": int(grant.get("slot", 0) or 0),
-                       "tokens": int(usage.get("total_tokens") or 0),
-                       **({"timings": out["timings"]} if out.get("timings") else {})},
-                      timeout=5)
-            except Exception:  # noqa: BLE001 — the engine's idle reading frees the seat then
-                pass
+        out = _post_stream(f"{self.door}/as/{path}/v1/chat/completions", body)
         r = openai_reply(out, time.time() - t0, self.name)
-        r.served = {"node": grant.get("node", ""), "url": grant.get("url", ""), "slot": int(grant.get("slot", 0) or 0),
-                    "sampled": sampled}
+        r.served = {"node": str(where.get("node") or ""), "url": self.door, "sampled": sampled}
         return r
+
